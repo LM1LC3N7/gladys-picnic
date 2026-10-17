@@ -1,8 +1,8 @@
 // -----------------------------------------------------------------------------
 // The account -> one Gladys device and its states (pure).
 //
-// `ext:<selector>:account:<country>-<hash of the e-mail>`: one device per
-// Picnic account, read only. Gladys has no date feature: the slot, the ETA
+// `ext:<selector>:account:<Picnic user id>` (else `<country>-<hash of the
+// e-mail>`, see deviceKeyOf): one device per Picnic account, read only. Gladys has no date feature: the slot, the ETA
 // and the cut-off are `text` features showing the local time Picnic gives
 // ("2026-10-18 14:15"). The cart total is a `currency` in euros (the only
 // currency of the four countries), the number of articles a generic sensor
@@ -36,12 +36,17 @@ export const FEATURES = {
   },
 };
 
-/** `<country>-<hash>` from the `<country>:<hash>` account key of src/config.js. */
-export const accountIds = (gladys, account) =>
-  gladys.externalIds('account', account.replace(':', '-').toLowerCase());
+/**
+ * The device key of an account: the Picnic `user_id` of the sign-in (Home
+ * Assistant's unique id), else `<country>-<hash of the e-mail>` from the
+ * account key of src/config.js. Chosen once per account and kept in /data.
+ */
+export const deviceKeyOf = (account, userId) => userId ?? account.replace(':', '-').toLowerCase();
 
-export function buildDevice(gladys, account, { language, country }) {
-  const ids = accountIds(gladys, account);
+export const accountIds = (gladys, key) => gladys.externalIds('account', key);
+
+export function buildDevice(gladys, key, { language, country }) {
+  const ids = accountIds(gladys, key);
   return {
     name: word(DEVICE_NAME, language),
     external_id: ids.device,

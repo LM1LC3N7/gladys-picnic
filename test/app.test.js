@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { DEVICE_TRANSPORTS, createLogger } from '@gladysassistant/integration-sdk';
+import { DEVICE_TRANSPORTS } from '@gladysassistant/integration-sdk';
 import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
 import { PicnicApp } from '../src/app.js';
 import { accountKey } from '../src/config.js';
@@ -30,18 +30,26 @@ import { fakePicnic, memoryStore, settle } from './helpers/fakePicnic.js';
 
 const CONFIG = { email: EMAIL, password: PASSWORD, country: COUNTRY };
 const ACCOUNT = `${COUNTRY}:${accountKey(EMAIL)}`;
-const DEVICE = `ext:test-integration:account:fr-${accountKey(EMAIL)}`;
+/** The device key is the Picnic user id of the sign-in. */
+const DEVICE = 'ext:test-integration:account:user-1';
 const feature = (role) => `${DEVICE}:${role}`;
 
 async function setup(
   t,
-  { config = CONFIG, store = memoryStore(), server = fakePicnic(), now = NOW, create = true } = {},
+  {
+    config = CONFIG,
+    store = memoryStore(),
+    server = fakePicnic(),
+    now = NOW,
+    create = true,
+    logs = [],
+  } = {},
 ) {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now });
   const gladys = createFakeGladys({ config });
   const app = new PicnicApp({
     gladys,
-    logger: createLogger({ level: 'silent' }),
+    logger: recorder(logs),
     transport: server.transport,
     now: () => Date.now(),
     store,
@@ -63,6 +71,15 @@ async function setup(
   }
   return { gladys, app, server, store, advance };
 }
+
+/** A logger keeping every line, to check that no secret ever reaches the logs. */
+const recorder = (logs) =>
+  Object.fromEntries(
+    ['debug', 'info', 'warn', 'error'].map((level) => [
+      level,
+      (...args) => logs.push(args.map((a) => (a instanceof Error ? a.stack : String(a))).join(' ')),
+    ]),
+  );
 
 const last = (gladys, role) => gladys.fake.lastState(feature(role));
 const message = (gladys) => gladys.fake.connectionStatus?.message ?? {};
@@ -182,7 +199,7 @@ test('a refused token: one new sign-in and one retry, then the reads go on', asy
   assert.equal(server.logins().length, 2);
 });
 
-test('refused again after the new sign-in: stop, a message, and only the test button retries', async (t) => {
+test('refused again after the new sign-in: a pause, a message, the test button retries at once', async (t) => {
   const { gladys, server, advance } = await setup(t);
   server.revoke();
   const refuse = {
@@ -196,9 +213,11 @@ test('refused again after the new sign-in: stop, a message, and only the test bu
   assert.equal(gladys.fake.connectionStatus.connected, false);
   assert.match(message(gladys).en, /refused the session again/);
   assert.equal(gladys.fake.transports.at(-1).transport, DEVICE_TRANSPORTS.UNREACHABLE);
+  assert.match(message(gladys).en, /New try \(one sign-in\) in 60 min/);
+  assert.match(message(gladys).fr, /Nouvel essai \(une connexion\) dans 60 min/);
   const count = server.requests.length;
-  await advance(3 * HOUR);
-  assert.equal(server.requests.length, count, 'stopped');
+  await advance(59 * MINUTE);
+  assert.equal(server.requests.length, count, 'paused');
 
   const ack = await gladys.fake.action(ACTIONS.TEST_CONNECTION);
   assert.match(ack.data.message.en, /Next delivery: 2026-10-18 14:15/);
@@ -277,7 +296,8 @@ test('the code buttons refuse what they cannot use', async (t) => {
   ack = await gladys.fake.action(ACTIONS.VERIFY_CODE, { code: CODE });
   assert.match(ack.data.message.en, /No sign-in is waiting/);
   ack = await gladys.fake.action(ACTIONS.REQUEST_CODE, { channel: 'sms' });
-  assert.match(ack.data.message.en, /without a code: connected/);
+  assert.match(ack.data.message.en, /Already connected/);
+  assert.equal(server.logins().length, 1, 'a working session is never put at risk');
   assert.equal(server.of('/user/2fa/generate').length, 0);
 });
 
@@ -316,8 +336,8 @@ test('429: a bounded pause for every path, buttons included', async (t) => {
   const count = server.requests.length;
   const ack = await gladys.fake.action(ACTIONS.TEST_CONNECTION);
   assert.match(ack.data.message.en, /slow down/);
-  const code = await gladys.fake.action(ACTIONS.REQUEST_CODE, { channel: 'sms' });
-  assert.match(code.data.message.en, /slow down/);
+  const code = await gladys.fake.action(ACTIONS.VERIFY_CODE, { code: CODE });
+  assert.match(code.data.message.en, /No sign-in is waiting/);
   // A Gladys reconnection during the pause keeps it.
   await app.connected(CONFIG);
   await advance(5 * HOUR);
@@ -406,4 +426,202 @@ test('read only: a command is refused', async (t) => {
   const device = gladys.fake.discoveredDevices[0];
   const ack = await gladys.fake.setValue(device, device.features[0], 'x');
   assert.equal(ack.success, false);
+});
+
+const is = (path) => (r) => r.path === path;
+const GENERATE = '/user/2fa/generate';
+const VERIFY = '/user/2fa/verify';
+
+test('a session refused twice: one new try after 1 h, 6 h, then every 24 h, never a code', async (t) => {
+  const server = fakePicnic();
+  server.rejectData = true;
+  const { gladys, advance } = await setup(t, { server });
+  assert.equal(server.logins().length, 1);
+  assert.match(message(gladys).en, /refused the session again/);
+  await advance(HOUR - MINUTE);
+  assert.equal(server.logins().length, 1);
+  await advance(2 * MINUTE);
+  assert.equal(server.logins().length, 2, 'one sign-in after an hour');
+  assert.match(message(gladys).en, /in 6 h/);
+  await advance(6 * HOUR);
+  assert.equal(server.logins().length, 3);
+  assert.match(message(gladys).en, /in 24 h/);
+  await advance(24 * HOUR);
+  assert.equal(server.logins().length, 4);
+  server.twoFactor = true;
+  await advance(24 * HOUR);
+  assert.equal(server.logins().length, 5);
+  assert.match(message(gladys).en, /asks for a verification code/);
+  await advance(48 * HOUR);
+  assert.equal(server.logins().length, 5, 'a code asked: stopped');
+  assert.equal(server.of(GENERATE).length, 0, 'never an SMS by itself');
+});
+
+test('a refused token on the position is ignored: the session and the reads go on', async (t) => {
+  const server = fakePicnic();
+  server.queue.push({
+    match: (r) => r.path.endsWith('/position'),
+    status: 401,
+    body: { error: { code: 'AUTH_ERROR' } },
+  });
+  const store = memoryStore();
+  const { gladys, advance } = await setup(t, { server, store, now: NEXT_START - 10 * MINUTE });
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+  assert.ok(server.tokens.has(store.data.session.token), 'the session is kept');
+  await advance(2 * MINUTE);
+  assert.equal(server.logins().length, 1, 'no new sign-in');
+  assert.equal(server.reads().length, 2);
+  assert.equal(server.of('/deliveries/d-next/position').length, 2);
+});
+
+test('a sign-in request rejected (400) asks to update the integration and stops', async (t) => {
+  const server = fakePicnic();
+  server.queue.push({ match: is('/user/login'), status: 400, body: { error: { code: 'BAD' } } });
+  const { gladys, advance } = await setup(t, { server });
+  assert.match(
+    message(gladys).en,
+    /rejected the sign-in request \(HTTP 400\).*update the integration/,
+  );
+  assert.match(message(gladys).fr, /Connexion refusée par Picnic \(HTTP 400\)/);
+  await advance(2 * HOUR);
+  assert.equal(server.logins().length, 1);
+});
+
+test('the test button signs in at most once per 30 s, even without any read yet', async (t) => {
+  const server = fakePicnic();
+  server.secret = 'something else';
+  const { gladys } = await setup(t, { server });
+  let ack = await gladys.fake.action(ACTIONS.TEST_CONNECTION);
+  assert.match(ack.data.message.en, /refused the e-mail/);
+  assert.equal(server.logins().length, 2);
+  ack = await gladys.fake.action(ACTIONS.TEST_CONNECTION);
+  assert.match(ack.data.message.en, /less than 30 seconds ago.*refused the e-mail/);
+  assert.equal(server.logins().length, 2);
+});
+
+test('a 429 pause survives a change of account and a restart', async (t) => {
+  const store = memoryStore();
+  const { gladys, server, advance } = await setup(t, { store });
+  server.queue.push({
+    match: is('/cart'),
+    status: 429,
+    body: '',
+    headers: { 'retry-after': '3600' },
+  });
+  await advance(15 * MINUTE);
+  assert.ok(store.data.rateLimitedUntil > Date.now() + 59 * MINUTE);
+  const count = server.requests.length;
+  await gladys.fake.configUpdated({ ...CONFIG, country: 'NL' });
+  await settle();
+  assert.equal(server.requests.length, count, 'the new account waits too');
+  assert.match(message(gladys).en, /slow down/);
+
+  const later = Date.now();
+  t.mock.timers.reset();
+  const again = await setup(t, { store, server, now: later });
+  assert.equal(server.requests.length, count, 'and so does a restart');
+  await again.advance(61 * MINUTE);
+  assert.ok(server.requests.length > count);
+});
+
+test('code buttons during a verification: refusals, a renewed waiting token, 429 and 403', async (t) => {
+  const server = fakePicnic({ twoFactor: true });
+  const store = memoryStore();
+  const { gladys, advance } = await setup(t, { server, store });
+  server.queue.push({
+    match: is(GENERATE),
+    status: 400,
+    body: { error: { code: 'TOO_MANY_ATTEMPTS', message: 'Try later' } },
+  });
+  let ack = await gladys.fake.action(ACTIONS.REQUEST_CODE, { channel: 'sms' });
+  assert.match(ack.data.message.en, /refused to send the code \(TOO_MANY_ATTEMPTS\)/);
+  assert.match(ack.data.message.fr, /Envoi du code refusé par Picnic \(TOO_MANY_ATTEMPTS\)/);
+
+  await advance(MINUTE);
+  const renewed = server.issue(server.preAuth);
+  server.queue.push({
+    match: is(GENERATE),
+    status: 204,
+    body: undefined,
+    headers: { 'x-picnic-auth': renewed },
+  });
+  ack = await gladys.fake.action(ACTIONS.REQUEST_CODE, { channel: 'sms' });
+  assert.match(ack.data.message.en, /by SMS/);
+  assert.equal(store.data.pending.token, renewed, 'the new waiting token is kept');
+
+  server.queue.push({
+    match: is(VERIFY),
+    status: 429,
+    body: '',
+    headers: { 'retry-after': '120' },
+  });
+  ack = await gladys.fake.action(ACTIONS.VERIFY_CODE, { code: CODE });
+  assert.match(ack.data.message.en, /slow down/);
+  assert.match(message(gladys).en, /asks for a verification code.*slow down/);
+  ack = await gladys.fake.action(ACTIONS.VERIFY_CODE, { code: CODE });
+  assert.match(ack.data.message.en, /slow down/);
+  assert.equal(server.of(VERIFY).length, 1, 'paused: no request');
+  await advance(3 * MINUTE);
+  ack = await gladys.fake.action(ACTIONS.VERIFY_CODE, { code: CODE });
+  assert.match(ack.data.message.en, /Code accepted/);
+  assert.equal(server.of(VERIFY).at(-1).token, renewed);
+});
+
+test('a 403 on a code button pauses every path for an hour', async (t) => {
+  const server = fakePicnic({ twoFactor: true });
+  const { gladys, advance } = await setup(t, { server });
+  server.queue.push({ match: is(GENERATE), status: 403, body: '<html>blocked</html>' });
+  let ack = await gladys.fake.action(ACTIONS.REQUEST_CODE, { channel: 'sms' });
+  assert.match(ack.data.message.en, /HTTP 403.*60 min/);
+  assert.match(message(gladys).en, /asks for a verification code.*HTTP 403/);
+  await advance(2 * MINUTE);
+  ack = await gladys.fake.action(ACTIONS.REQUEST_CODE, { channel: 'sms' });
+  assert.match(ack.data.message.en, /HTTP 403/);
+  assert.equal(server.of(GENERATE).length, 1);
+});
+
+test('a restart between the two steps: the code still verifies, the one-a-minute limit holds', async (t) => {
+  const server = fakePicnic({ twoFactor: true });
+  const store = memoryStore();
+  const first = await setup(t, { server, store });
+  await first.gladys.fake.action(ACTIONS.REQUEST_CODE, { channel: 'sms' });
+  assert.equal(server.of(GENERATE).length, 1);
+  first.app.stop();
+  t.mock.timers.reset();
+
+  const { gladys } = await setup(t, { server, store, now: NOW + 30_000 });
+  assert.equal(server.logins().length, 1, 'no new sign-in at the restart');
+  assert.match(message(gladys).en, /asks for a verification code/);
+  let ack = await gladys.fake.action(ACTIONS.REQUEST_CODE, { channel: 'sms' });
+  assert.match(ack.data.message.en, /less than a minute ago/);
+  ack = await gladys.fake.action(ACTIONS.VERIFY_CODE, { code: CODE });
+  assert.match(ack.data.message.en, /Code accepted/);
+  assert.equal(server.reads().length, 1);
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+});
+
+test('no e-mail, password, password hash, token or code ever reaches the logs', async (t) => {
+  const logs = [];
+  const server = fakePicnic({ twoFactor: true });
+  const { gladys, advance } = await setup(t, { server, logs });
+  await gladys.fake.action(ACTIONS.REQUEST_CODE, { channel: 'sms' });
+  await gladys.fake.action(ACTIONS.VERIFY_CODE, { code: '000000' });
+  await gladys.fake.action(ACTIONS.VERIFY_CODE, { code: CODE });
+  server.revoke();
+  server.secret = 'something else';
+  await advance(15 * MINUTE);
+  assert.match(message(gladys).en, /refused the e-mail/);
+  assert.ok(logs.length >= 4, 'the flow was logged');
+  const text = logs.join('\n');
+  const secrets = [
+    EMAIL,
+    PASSWORD,
+    createHash('md5').update(PASSWORD, 'utf8').digest('hex'),
+    CODE,
+    '000000',
+    ...server.all,
+  ];
+  for (const secret of secrets) {
+    assert.ok(!text.includes(secret), `a secret reached the logs: ${secret.slice(0, 6)}…`);
+  }
 });

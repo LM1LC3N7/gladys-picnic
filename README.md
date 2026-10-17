@@ -39,12 +39,14 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (PicnicApp)
   day (12 h before the slot), every 2 minutes from 45 minutes before the slot
   or ETA to 30 minutes after it.
 - **Errors**: a refused token signs in again once and retries once (one new
-  sign-in per cycle at most); refused again, or a refused password, or a
-  code asked: stop and a status message, until the configuration changes or
-  a button is clicked. 429: pause of `Retry-After` bounded to 1 min – 6 h
+  sign-in per cycle at most); refused again: a pause and one new try after
+  1 h, 6 h, then every 24 h. A refused password, a rejected sign-in request
+  (400/422) or a code asked: stop and a status message, until the
+  configuration changes or a button is clicked. A 401 on the live position
+  is ignored (the next cart read tells a dead session). 429: pause of `Retry-After` bounded to 1 min – 6 h
   (15 min without it), for every path, kept across Gladys reconnections.
   5xx/network: 2, 5, 10, 15, then 30 minutes. 403 without an authentication
-  code: one hour. Bodies are read up to 1 MiB.
+  code: one hour, buttons included. Bodies are read up to 4 MiB.
 - **Gladys side**: one device per account, `text` features for the times
   (Gladys has no date feature), a `currency`/`euro` total, a unit-less
   article count; the scene trigger `delivery_approaching` once per delivery

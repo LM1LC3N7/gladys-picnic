@@ -54,7 +54,9 @@ test/helpers/       a fake Picnic behind the transport; Gladys is the SDK's fake
 
 ## Rules
 
-- **External ids are forever**: device `account:<country>-<hash>`, features
+- **External ids are forever**: device `account:<Picnic user id>` (or
+  `account:<country>-<hash>` when the sign-in gave none; chosen once, kept in
+  `/data`), features
   `next-slot-start`, `next-slot-end`, `eta`, `order-cut-off`,
   `last-order-status`, `cart-items`, `cart-total`. Never change how they are
   built.

@@ -38,7 +38,7 @@ test('errors: authentication codes whatever the status, 429, 5xx, 403', () => {
     kind({ status: 401 }, { error: { code: 'AUTH_INVALID_CRED' } }, { login: true }),
     'refused',
   );
-  assert.equal(kind({ status: 400 }, undefined, { login: true }), 'refused');
+  assert.equal(kind({ status: 400 }, undefined, { login: true }), 'login_rejected');
   assert.equal(kind({ status: 403 }, { error: { code: 'AUTH_ERROR' } }), 'unauthorized');
   assert.equal(
     kind({ status: 403 }, '<html>'),

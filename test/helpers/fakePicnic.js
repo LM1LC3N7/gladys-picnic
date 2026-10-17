@@ -34,7 +34,11 @@ export function fakePicnic({ twoFactor = false, lifetime = 30 * DAY } = {}) {
     tokens: new Set(),
     preAuth: new Set(),
     issued: 0,
+    /** Every token ever issued, to check none reaches the logs. */
+    all: [],
     down: false,
+    /** Every read refuses the token (a session the server never accepts). */
+    rejectData: false,
     /** One-shot answers: { match(request), status, body, headers } */
     queue: [],
     of(path) {
@@ -54,6 +58,7 @@ export function fakePicnic({ twoFactor = false, lifetime = 30 * DAY } = {}) {
         exp: Math.floor((Date.now() + this.lifetime) / 1000),
       });
       set.add(token);
+      this.all.push(token);
       return token;
     },
     /** Refuse every token issued so far (expired or revoked on the server side). */
@@ -120,7 +125,7 @@ export function fakePicnic({ twoFactor = false, lifetime = 30 * DAY } = {}) {
       return answer(204, undefined, { 'x-picnic-auth': server.issue() });
     }
 
-    if (!server.tokens.has(request.token)) {
+    if (!server.tokens.has(request.token) || server.rejectData) {
       return answer(401, { error: { code: 'AUTH_ERROR', message: 'Not authenticated' } });
     }
     if (path === '/cart' && method === 'GET') {

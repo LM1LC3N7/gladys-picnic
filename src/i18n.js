@@ -44,6 +44,10 @@ export function age(ms) {
 
 const both = (en, fr) => ({ en, fr });
 
+/** Two messages one after the other, in each language. */
+export const join = (...messages) =>
+  both(messages.map((m) => m.en).join(' '), messages.map((m) => m.fr).join(' '));
+
 export const T = {
   noCredentials: both(
     'Enter the e-mail, the password and the country of your Picnic account (the ones of the app).',
@@ -68,9 +72,19 @@ export const T = {
     'Picnic asks for a verification code. In this configuration screen: 1) "Send the verification code" (SMS or e-mail), 2) type the code you received in "Verify the code".',
     'Picnic demande un code de vérification. Dans cet écran de configuration : 1) « Envoyer le code de vérification » (SMS ou e-mail), 2) saisissez le code reçu dans « Vérifier le code ».',
   ),
-  sessionRefused: both(
-    'Picnic refused the session again right after a new sign-in: the integration stopped. Click "Test the connection" to try once more.',
-    "Picnic a de nouveau refusé la session juste après une nouvelle connexion : l'intégration s'est arrêtée. Cliquez sur « Tester la connexion » pour réessayer une fois.",
+  sessionRefused: (wait) =>
+    both(
+      `Picnic refused the session again right after a new sign-in: the integration paused. New try (one sign-in) in ${wait.en}, or click "Test the connection".`,
+      `Picnic a de nouveau refusé la session juste après une nouvelle connexion : l'intégration est en pause. Nouvel essai (une connexion) dans ${wait.fr}, ou cliquez sur « Tester la connexion ».`,
+    ),
+  loginRejected: (status) =>
+    both(
+      `Picnic rejected the sign-in request (HTTP ${status}): the API has probably changed, update the integration. The integration waits (saving the configuration or the test button tries again).`,
+      `Connexion refusée par Picnic (HTTP ${status}) : l'API a sans doute changé, mettez l'intégration à jour. L'intégration attend (enregistrer la configuration ou le bouton de test réessaie).`,
+    ),
+  busy: both(
+    'A read of Picnic is in progress: try again in a minute.',
+    'Une lecture de Picnic est en cours : réessayez dans une minute.',
   ),
   unreachable: (reason, wait) =>
     both(
@@ -125,6 +139,15 @@ export const T = {
     expired: both(
       'The sign-in waiting for this code expired: click "Send the verification code" again.',
       'La connexion qui attendait ce code a expiré : cliquez à nouveau sur « Envoyer le code de vérification ».',
+    ),
+    sendRefused: (code) =>
+      both(
+        `Picnic refused to send the code (${code ?? 'no reason given'}): try the other channel, or later.`,
+        `Envoi du code refusé par Picnic (${code ?? 'sans motif'}) : essayez l'autre canal, ou plus tard.`,
+      ),
+    alreadyConnected: both(
+      'Already connected to Picnic: no code is needed.',
+      "Déjà connecté à Picnic : aucun code n'est nécessaire.",
     ),
     verified: both('Code accepted: connected to Picnic.', 'Code accepté : connecté à Picnic.'),
     failed: (reason) =>

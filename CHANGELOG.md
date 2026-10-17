@@ -28,7 +28,8 @@ the notes of the version's GitHub Release.
 - Reads every 15 minutes (5 to 60), every 5 minutes on the delivery day and
   every 2 minutes around the delivery, with the live position.
 - Resilience: a refused token signs in again once, then the integration
-  stops with a message; a refused password stops until the configuration
+  pauses with a message and tries once more after 1 h, 6 h, then every
+  24 h; a refused password stops until the configuration
   changes or the test button is clicked; 429 pauses every path (1 minute to
   6 hours); 5xx and network errors retried after 2 to 30 minutes.
 - "Test the connection" button; documentation in English and French;

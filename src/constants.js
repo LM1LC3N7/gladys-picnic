@@ -67,8 +67,8 @@ export const LIMITS = {
   statesPerMinute: 300,
   sceneEventsPerMinute: 300,
   statesPerRequest: 100,
-  /** Largest answer read: a cart with its slots is a few tens of KB. */
-  responseBytes: 1024 * 1024,
+  /** Largest answer read: a cart with its slots is a few tens of KB, a long delivery history more. */
+  responseBytes: 4 * 1024 * 1024,
   /** Scene events kept while Gladys is unreachable. */
   queuedEvents: 100,
   /** Delivery ids remembered as already announced (in /data). */
@@ -80,6 +80,13 @@ export const HOUR = 60 * MINUTE;
 
 export const TIMINGS = {
   requestTimeout: 20_000,
+  /**
+   * The buttons (60 s for Gladys): shorter requests, so the worst case
+   * (sign-in, cart, new sign-in, cart, deliveries) stays under 50 s.
+   */
+  quickTimeout: 8_000,
+  /** After a session refused twice: one new try after 1 h, 6 h, then every 24 h. */
+  sessionRetry: [HOUR, 6 * HOUR, 24 * HOUR],
   /** The publisher sends what is pending every second. */
   flushInterval: 1_000,
   /** An unchanged state is sent again every 30 minutes. */

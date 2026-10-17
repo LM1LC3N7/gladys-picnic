@@ -77,6 +77,15 @@ test('the next delivery is the CURRENT one with the earliest slot, not yet deliv
   assert.equal(readNextDelivery([{ status: 'CURRENT', slot: {} }]), null);
 });
 
+test('a stale CURRENT delivery never hides the real next one', () => {
+  const stale = delivery({ id: 'd-stale', start: NOW - 2 * DAY });
+  assert.equal(readNextDelivery([stale, ...deliveries()], NOW).id, 'd-next');
+  assert.equal(readNextDelivery([stale], NOW).id, 'd-stale', 'kept when it is the only one');
+  // Still the next one up to 30 minutes after the end of its window.
+  const late = delivery({ id: 'd-late', start: NOW - 2 * HOUR - 20 * MINUTE });
+  assert.equal(readNextDelivery([late, ...deliveries()], NOW).id, 'd-late');
+});
+
 test('the ETA: eta2 of the summary, else the position, whose eta wins', () => {
   const eta2 = { start: paris(NEXT_START + 20 * MINUTE), end: paris(NEXT_START + 40 * MINUTE) };
   const next = readNextDelivery([delivery({ eta2 })]);

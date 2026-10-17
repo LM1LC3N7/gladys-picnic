@@ -60,9 +60,19 @@ the status says "Picnic asks for a verification code":
    button. "Code accepted" means connected.
 
 The session is then kept (in the integration's `/data`): no code at the next
-restarts. A code is requested at most once a minute; a sign-in waiting for
-its code is restarted after 10 minutes. If the code is refused, check it or
-ask for a new one.
+restarts. Picnic may still ask for a code again later, when the session
+expires or is revoked (a new device, a password change): the status then
+says so, and the same two steps apply.
+
+- A code is requested at most once a minute (even across a restart).
+- Clicking **Send the verification code** more than 10 minutes after the
+  sign-in that asked for it signs in again first (one sign-in), then asks
+  for the code: use the newest code you receive.
+- While connected, **Send the verification code** answers "already
+  connected" and sends nothing.
+- If Picnic refuses to send the code, the message gives its reason code: try
+  the other channel, or later. If the code is refused, check it or ask for a
+  new one. A restart between the two steps loses nothing.
 
 ## Refresh
 
@@ -88,10 +98,18 @@ Without an ETA from Picnic, it does not fire. Variables:
   e-mail, the password and the country, then save (or click _Test the
   connection_). It never signs in again by itself after a refusal.
 - **Session refused**: the session token kept is refused, the integration
-  signs in again **once**; refused again, it stops with a message. _Test the
-  connection_ tries once more.
+  signs in again **once**; refused again, it pauses with a message and tries
+  again (one sign-in each time) after 1 hour, 6 hours, then every 24 hours.
+  If such a try is refused or asks for a code, it stops as above (it never
+  requests a code by itself). _Test the connection_ tries at once.
+- **Sign-in request rejected (HTTP 400)**: Picnic has probably changed its
+  API; the integration stops and asks to update it.
 - **Too many requests (429)**: a pause of 1 minute to 6 hours (Picnic's
-  `Retry-After`, 15 minutes without it), for every read and button.
+  `Retry-After`, 15 minutes without it), for every read and button, kept
+  across a restart and a change of account. **HTTP 403** (a block): one hour,
+  for every read and button too.
+- _Test the connection_ reads at most once every 30 seconds (one sign-in at
+  most), without the live position, so it answers within a minute.
 - **Picnic unavailable (5xx, network)**: new tries after 2, 5, 10, 15, then
   every 30 minutes.
 - The live position failing never hides the cart and the deliveries.
@@ -109,6 +127,7 @@ Without an ETA from Picnic, it does not fire. Variables:
 
 The integration keeps in `/data/picnic-state.json` (readable by its
 container only): a random device id, the session token, the account it
-belongs to as a hash of the e-mail and the country, and the ids of the
-deliveries already announced. Neither the e-mail nor the password. Nothing
+belongs to as a hash of the e-mail and the country, your Picnic user id (it
+names the Gladys device), the end of a 429 pause, when a code was last
+requested, and the ids of the deliveries already announced. Neither the e-mail nor the password. Nothing
 is sent anywhere but to Picnic.

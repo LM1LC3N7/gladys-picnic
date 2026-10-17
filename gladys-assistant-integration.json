@@ -4,7 +4,7 @@
   "name": "Picnic",
   "description": {
     "en": "Picnic groceries (NL, DE, BE, FR): next delivery slot and ETA, last order, cart. Read only.",
-    "fr": "Courses Picnic (NL, DE, BE, FR) : créneau et arrivée de la livraison, commande, panier."
+    "fr": "Courses Picnic (NL, DE, BE, FR) : créneau, arrivée, commande, panier. Lecture seule."
   },
   "version": "0.1.0",
   "docker_image": "ghcr.io/lm1lc3n7/gladys-picnic:0.1.0",

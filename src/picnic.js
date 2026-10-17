@@ -19,7 +19,11 @@ import { LIMITS, TIMINGS } from './constants.js';
  * - `no_credentials`: no e-mail, password or country (never sent);
  * - `refused`: the sign-in was refused (e-mail or password);
  * - `two_factor`: the sign-in needs a verification code (SMS or e-mail);
+ * - `login_rejected`: the sign-in request itself was rejected (400/422: the
+ *   API changed, the integration needs an update);
  * - `code_refused`: Picnic refused the verification code;
+ * - `code_send_refused`: Picnic refused to send a code (channel, account);
+ * - `code_expired`, `no_pending`: no sign-in (still) waiting for a code;
  * - `unauthorized`: the API refused the session token;
  * - `session_refused`: the token was refused again right after a new sign-in;
  * - `forbidden`: a 403 that is not an authentication error (a CDN block);
@@ -189,8 +193,8 @@ export function errorFor({ status, headers = {} }, json, { login = false, now } 
     return new PicnicError('forbidden', 'request refused', { status, code });
   }
   if (login && (status === 400 || status === 422)) {
-    // A sign-in the server does not accept is never retried in a loop.
-    return new PicnicError('refused', 'sign-in refused', { status, code });
+    // The request itself is refused (an API change): stop like a refusal, never in a loop.
+    return new PicnicError('login_rejected', 'sign-in request rejected', { status, code });
   }
   if (status < 200 || status >= 300) {
     return new PicnicError('http', 'request failed', { status, code });

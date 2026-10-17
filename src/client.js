@@ -17,6 +17,12 @@ import {
   tokenExpiry,
 } from './picnic.js';
 
+/** The Picnic `user_id` of the sign-in answer, when it is a usable id. */
+export const userIdOf = (value) => {
+  const id = typeof value === 'number' ? String(value) : value;
+  return typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : undefined;
+};
+
 export class PicnicClient {
   constructor({ transport = httpRequest, now = Date.now, onChange } = {}) {
     this.transport = transport;
@@ -35,6 +41,8 @@ export class PicnicClient {
     this.signingIn = undefined;
     /** One new sign-in per cycle at most (beginCycle resets it). */
     this.relogged = false;
+    /** Per-request timeout; undefined = the transport's default (shorter for the buttons). */
+    this.timeout = undefined;
   }
 
   configure({ email, password, country, did, session = null, pending = null }) {
@@ -93,6 +101,7 @@ export class PicnicClient {
       method,
       headers: this.headers(token, body, picnic),
       body,
+      ...(this.timeout === undefined ? {} : { timeout: this.timeout }),
     });
     let json;
     try {
@@ -129,13 +138,14 @@ export class PicnicClient {
           if (!token) {
             throw new PicnicError('bad_response', 'Picnic sent no session token');
           }
+          const userId = userIdOf(json?.user_id);
           if (json?.second_factor_authentication_required === true) {
             this.session = null;
-            this.pending = { token, at: this.now() };
+            this.pending = { token, at: this.now(), userId };
             await this.changed();
             throw new PicnicError('two_factor', 'Picnic asks for a verification code');
           }
-          this.session = { token, expiresAt: tokenExpiry(token) };
+          this.session = { token, expiresAt: tokenExpiry(token), userId };
           this.pending = null;
           await this.changed();
           return this.session;
@@ -152,7 +162,7 @@ export class PicnicClient {
     const token = this.session.token;
     const { json, token: renewed } = await this.send(method, path, { ...options, token });
     if (renewed && this.session?.token === token && renewed !== token) {
-      this.session = { token: renewed, expiresAt: tokenExpiry(renewed) };
+      this.session = { ...this.session, token: renewed, expiresAt: tokenExpiry(renewed) };
       await this.changed();
     }
     return json;
@@ -228,9 +238,16 @@ export class PicnicClient {
     return data;
   }
 
-  /** The live position of a delivery on its way (empty outside that window). */
+  /**
+   * The live position of a delivery on its way (empty outside that window). A
+   * secondary read: never a new sign-in, and a refused token here never
+   * touches the session (the next cart read tells a really dead session).
+   */
   async position(deliveryId) {
-    const data = await this.call('GET', PATHS.position(deliveryId), { picnic: true });
+    if (!this.session) {
+      return undefined;
+    }
+    const data = await this.request('GET', PATHS.position(deliveryId), { picnic: true });
     return data && typeof data === 'object' && !Array.isArray(data) ? data : undefined;
   }
 
@@ -240,8 +257,8 @@ export class PicnicClient {
     return Boolean(this.pending) && this.now() - this.pending.at < TIMINGS.pendingLifetime;
   }
 
-  /** A 2FA call with the token of the pending sign-in; an error code is a refusal. */
-  async twoFactor(path, payload) {
+  /** A 2FA call with the token of the pending sign-in; an error code is a refusal (`refusal`). */
+  async twoFactor(path, payload, refusal = 'code_refused') {
     let answer;
     try {
       answer = await this.send('POST', path, { payload, token: this.pending.token, picnic: true });
@@ -255,7 +272,7 @@ export class PicnicClient {
         });
       }
       if (err.kind === 'http' && err.code) {
-        throw new PicnicError('code_refused', 'Picnic refused the code', {
+        throw new PicnicError(refusal, 'Picnic refused the request', {
           status: err.status,
           code: err.code,
         });
@@ -264,7 +281,7 @@ export class PicnicClient {
     }
     const code = errorCode(answer.json);
     if (code) {
-      throw new PicnicError('code_refused', 'Picnic refused the code', { code });
+      throw new PicnicError(refusal, 'Picnic refused the request', { code });
     }
     return answer;
   }
@@ -288,7 +305,16 @@ export class PicnicClient {
         }
       }
     }
-    await this.twoFactor(PATHS.generateCode, { channel: value });
+    const { token } = await this.twoFactor(
+      PATHS.generateCode,
+      { channel: value },
+      'code_send_refused',
+    );
+    // A new token in the answer replaces the waiting one (session.py does the same).
+    if (token && this.pending && token !== this.pending.token) {
+      this.pending = { ...this.pending, token };
+      await this.changed();
+    }
     return 'sent';
   }
 
@@ -299,7 +325,7 @@ export class PicnicClient {
     }
     const { token } = await this.twoFactor(PATHS.verifyCode, { otp: code });
     const session = token ?? this.pending.token;
-    this.session = { token: session, expiresAt: tokenExpiry(session) };
+    this.session = { token: session, expiresAt: tokenExpiry(session), userId: this.pending.userId };
     this.pending = null;
     this.relogged = false;
     await this.changed();

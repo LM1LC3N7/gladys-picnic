@@ -63,9 +63,22 @@ vérification » :
    bouton. « Code accepté » veut dire connecté.
 
 La session est ensuite gardée (dans le `/data` de l'intégration) : pas de
-code aux redémarrages suivants. Un code est demandé au plus une fois par
-minute ; une connexion qui attend son code est relancée au bout de
-10 minutes. Si le code est refusé, vérifiez-le ou demandez-en un nouveau.
+code aux redémarrages suivants. Picnic peut toutefois redemander un code
+plus tard, quand la session expire ou est révoquée (nouvel appareil,
+changement de mot de passe) : l'état l'indique alors, et les deux mêmes
+étapes s'appliquent.
+
+- Un code est demandé au plus une fois par minute (même après un
+  redémarrage).
+- Cliquer sur **Envoyer le code de vérification** plus de 10 minutes après
+  la connexion qui l'a demandé refait d'abord une connexion (une seule),
+  puis demande le code : utilisez le dernier code reçu.
+- Une fois connecté, **Envoyer le code de vérification** répond « déjà
+  connecté » et n'envoie rien.
+- Si Picnic refuse d'envoyer le code, le message donne son code de motif :
+  essayez l'autre canal, ou plus tard. Si le code est refusé, vérifiez-le
+  ou demandez-en un nouveau. Un redémarrage entre les deux étapes ne fait
+  rien perdre.
 
 ## Rafraîchissement
 
@@ -94,11 +107,21 @@ en texte). Exemple : allumer la lumière de l'entrée et envoyer le message
   cliquez sur _Tester la connexion_). Elle ne se reconnecte jamais d'elle-même
   après un refus.
 - **Session refusée** : le jeton de session gardé est refusé, l'intégration
-  se reconnecte **une fois** ; refusée à nouveau, elle s'arrête avec un
-  message. _Tester la connexion_ réessaie une fois.
+  se reconnecte **une fois** ; refusée à nouveau, elle se met en pause avec
+  un message et réessaie (une connexion à chaque fois) après 1 heure,
+  6 heures, puis toutes les 24 heures. Si un de ces essais est refusé ou
+  demande un code, elle s'arrête comme ci-dessus (elle ne demande jamais de
+  code d'elle-même). _Tester la connexion_ réessaie tout de suite.
+- **Connexion refusée par Picnic (HTTP 400)** : Picnic a sans doute changé
+  son API ; l'intégration s'arrête et demande à être mise à jour.
 - **Trop de requêtes (429)** : une pause de 1 minute à 6 heures (le
   `Retry-After` de Picnic, 15 minutes sans lui), pour toutes les lectures et
-  tous les boutons.
+  tous les boutons, gardée après un redémarrage ou un changement de compte.
+  **HTTP 403** (un blocage) : une heure, pour toutes les lectures et tous les
+  boutons aussi.
+- _Tester la connexion_ lit au plus une fois toutes les 30 secondes (une
+  connexion au plus), sans la position en direct, pour répondre en moins
+  d'une minute.
 - **Picnic indisponible (5xx, réseau)** : nouveaux essais après 2, 5, 10, 15,
   puis toutes les 30 minutes.
 - Une panne de la position en direct ne cache jamais le panier et les
@@ -120,5 +143,7 @@ en texte). Exemple : allumer la lumière de l'entrée et envoyer le message
 L'intégration garde dans `/data/picnic-state.json` (lisible par son seul
 conteneur) : un identifiant d'appareil aléatoire, le jeton de session, le
 compte auquel il appartient sous forme d'empreinte de l'e-mail et du pays,
+votre identifiant utilisateur Picnic (il nomme l'appareil Gladys), la fin
+d'une pause 429, l'heure de la dernière demande de code,
 et les identifiants des livraisons déjà annoncées. Ni l'e-mail ni le mot de
 passe. Rien n'est envoyé ailleurs qu'à Picnic.

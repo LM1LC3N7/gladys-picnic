@@ -43,6 +43,9 @@ test('the persisted state: repaired, never trusted', () => {
     did: null,
     session: null,
     pending: null,
+    codeAt: undefined,
+    rateLimitedUntil: undefined,
+    deviceKey: null,
     announced: [],
   });
   const memory = normalizeMemory({
@@ -51,7 +54,12 @@ test('the persisted state: repaired, never trusted', () => {
     pending: { account: 'FR:x', token: 'p' },
     announced: ['a', 2, 'b'],
   });
-  assert.deepEqual(memory.session, { account: 'FR:x', token: 't', expiresAt: undefined });
+  assert.deepEqual(memory.session, {
+    account: 'FR:x',
+    token: 't',
+    expiresAt: undefined,
+    userId: undefined,
+  });
   assert.equal(memory.pending, null, 'a pending sign-in without its date is dropped');
   assert.deepEqual(memory.announced, ['a', 'b']);
   assert.equal(normalizeMemory({ did: '../etc' }).did, null);
@@ -68,6 +76,9 @@ test('the file store writes atomically, readable by its owner only', async (t) =
   await store.save({ did: 'X' });
   assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), { did: 'X' });
   assert.deepEqual(await store.load(), { did: 'X' });
+  // Saves at the same time never share the temporary file: the last one wins.
+  await Promise.all(Array.from({ length: 20 }, (_, n) => store.save({ n })));
+  assert.deepEqual(await store.load(), { n: 19 });
   if (process.platform !== 'win32') {
     assert.equal((await stat(path)).mode & 0o777, 0o600);
   }

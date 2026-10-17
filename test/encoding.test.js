@@ -22,6 +22,7 @@ const FILES = [
   'THIRD_PARTY_NOTICES.md',
   'SECURITY.md',
   'src/i18n.js',
+  'src/devices.js',
 ];
 
 for (const file of FILES) {

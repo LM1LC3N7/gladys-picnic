@@ -11,8 +11,8 @@ import { DEVICE_TRANSPORTS, createLogger } from '@gladysassistant/integration-sd
 import { PicnicClient } from './client.js';
 import { normalizeConfig } from './config.js';
 import { CODE_CHANNELS, LIMITS, MINUTE, SCENE_TRIGGERS, TIMINGS } from './constants.js';
-import { accountIds, buildDevice, deviceStates, statusName } from './devices.js';
-import { T, age } from './i18n.js';
+import { accountIds, buildDevice, deviceKeyOf, deviceStates, statusName } from './devices.js';
+import { T, age, join } from './i18n.js';
 import {
   approaching,
   isNear,
@@ -29,7 +29,14 @@ import { fileStore, newDeviceId, normalizeMemory } from './store.js';
 /** Errors Picnic did not answer usefully for: the account is unreachable. */
 const OFFLINE = new Set(['network', 'timeout', 'unavailable', 'bad_response', 'size', 'http']);
 /** Errors that stop the polling until the user acts (configuration, buttons). */
-const BLOCKED = { refused: 'refused', no_credentials: 'refused', two_factor: 'two_factor' };
+const BLOCKED = {
+  refused: 'refused',
+  no_credentials: 'refused',
+  login_rejected: 'login_rejected',
+  two_factor: 'two_factor',
+};
+/** Errors of the main reads the position read passes on (the rest is logged). */
+const FATAL = new Set(['refused', 'login_rejected', 'two_factor', 'session_refused']);
 
 export class PicnicApp {
   constructor({
@@ -59,16 +66,20 @@ export class PicnicApp {
     this.timer = undefined;
     this.running = undefined;
     this.generation = 0;
-    /** undefined | 'refused' | 'two_factor' | 'session_refused': waits for the user. */
+    /**
+     * undefined | 'refused' | 'login_rejected' | 'two_factor': waits for the
+     * user; 'session_refused': tried again after 1 h, 6 h, then every 24 h.
+     */
     this.blocked = undefined;
+    this.sessionRetries = 0;
+    this.retryAt = 0;
     this.offline = false;
     this.connectedOnce = false;
     this.failures = 0;
     this.pausedUntil = 0;
-    /** 'rate' (a 429: every path waits), 'forbidden' or 'backoff'. */
+    /** 'rate' (a 429: every path waits), 'forbidden' (every path too) or 'backoff'. */
     this.pauseKind = undefined;
     this.lastTestAt = -Infinity;
-    this.lastCodeAt = -Infinity;
     this.started = false;
     this.lastStatus = undefined;
   }
@@ -84,6 +95,11 @@ export class PicnicApp {
     if (!this.memory.did) {
       this.memory.did = this.randomDid();
       await this.saveMemory();
+    }
+    // A 429 pause survives a restart and a change of account.
+    if (this.memory.rateLimitedUntil > Math.max(this.now(), this.pausedUntil)) {
+      this.pausedUntil = this.memory.rateLimitedUntil;
+      this.pauseKind = 'rate';
     }
     const { email, password, country, account } = this.config;
     const mine = (entry) => (entry && entry.account === account ? entry : null);
@@ -106,7 +122,7 @@ export class PicnicApp {
       await this.setStatus(false, T.twoFactor);
       return;
     }
-    await this.setStatus(false, T.connecting);
+    await this.setStatus(false, this.pauseMessage() ?? T.connecting);
     await this.tick();
   }
 
@@ -123,18 +139,22 @@ export class PicnicApp {
     }
   }
 
-  /** Forgets the account and the failures: a new account, or a restart. */
+  /** Forgets the account and the failures: a new account, or a restart. A 429 pause stays. */
   reset() {
     this.snapshot = undefined;
     this.readAt = undefined;
     this.published = undefined;
     this.badge = undefined;
     this.blocked = undefined;
+    this.sessionRetries = 0;
+    this.retryAt = 0;
     this.offline = false;
     this.connectedOnce = false;
     this.failures = 0;
-    this.pausedUntil = 0;
-    this.pauseKind = undefined;
+    if (this.pauseKind !== 'rate' || this.now() >= this.pausedUntil) {
+      this.pausedUntil = 0;
+      this.pauseKind = undefined;
+    }
   }
 
   /**
@@ -194,6 +214,11 @@ export class PicnicApp {
       .catch((err) => this.logger.warn(`setConnectionStatus failed: ${err.message}`));
   }
 
+  /** The message of the last status (multi-language), or undefined. */
+  get lastMessage() {
+    return JSON.parse(this.lastStatus ?? '[false,null]')[1] ?? undefined;
+  }
+
   async saveMemory() {
     await this.store
       .save(this.memory)
@@ -220,58 +245,79 @@ export class PicnicApp {
   /** The next read: after the pause, else the interval (shorter around a delivery). */
   scheduleNext() {
     this.clearTimer();
-    if (!this.client.hasCredentials || this.blocked) {
+    if (!this.client.hasCredentials) {
       return;
     }
     const now = this.now();
-    const delay =
-      now < this.pausedUntil
-        ? this.pausedUntil - now
-        : nextDelay(this.snapshot?.next, now, this.config.pollInterval * MINUTE);
+    let delay;
+    if (this.blocked === 'session_refused') {
+      delay = Math.max(this.retryAt, this.pausedUntil) - now;
+    } else if (this.blocked) {
+      return;
+    } else if (now < this.pausedUntil) {
+      delay = this.pausedUntil - now;
+    } else {
+      delay = nextDelay(this.snapshot?.next, now, this.config.pollInterval * MINUTE);
+    }
     const generation = this.generation;
-    this.timer = this.timers.setTimeout(() => {
-      this.timer = undefined;
-      if (generation === this.generation) {
-        this.tick().catch((err) => this.logger.error(`Picnic refresh failed: ${err.message}`));
-      }
-    }, delay);
+    this.timer = this.timers.setTimeout(
+      () => {
+        this.timer = undefined;
+        if (generation === this.generation) {
+          this.tick().catch((err) => this.logger.error(`Picnic refresh failed: ${err.message}`));
+        }
+      },
+      Math.max(0, delay),
+    );
   }
 
-  /** One run at a time: a tick during a run joins it. */
-  tick() {
+  /** One run at a time: a tick during a run joins it. `quick`: for a button. */
+  tick({ quick = false } = {}) {
     if (!this.running) {
-      this.running = this.run().finally(() => {
+      this.running = this.run({ quick }).finally(() => {
         this.running = undefined;
       });
     }
     return this.running;
   }
 
-  async run() {
+  async run({ quick = false } = {}) {
     const generation = this.generation;
-    if (!this.client.hasCredentials || this.blocked) {
+    const now = this.now();
+    if (!this.client.hasCredentials) {
       return;
     }
-    if (this.now() < this.pausedUntil) {
+    if (this.blocked === 'session_refused' && now >= this.retryAt) {
+      // The spaced new try: one sign-in, never a code.
+      this.logger.info('Picnic: trying the session again');
+      this.blocked = undefined;
+    }
+    if (this.blocked) {
+      this.scheduleNext();
+      return;
+    }
+    if (now < this.pausedUntil) {
       this.scheduleNext();
       return;
     }
     this.client.beginCycle();
+    this.client.timeout = quick ? TIMINGS.quickTimeout : undefined;
     try {
       const cart = await this.client.cart();
       const deliveries = await this.client.deliveries();
-      const next = readNextDelivery(deliveries);
+      const next = readNextDelivery(deliveries, this.now());
       let position;
       let secondary;
-      if (next && isNear(next, this.now())) {
-        // A secondary read: its failure never hides the cart and the deliveries.
+      if (!quick && next && isNear(next, this.now())) {
+        // A secondary read: its failure never hides the cart and the deliveries,
+        // and a refused token there never stops anything (the next cart read tells).
         try {
           position = await this.client.position(next.id);
         } catch (err) {
-          if (['refused', 'two_factor', 'session_refused'].includes(err.kind)) {
+          if (FATAL.has(err.kind)) {
             throw err;
           }
-          if (err.kind === 'rate_limited') {
+          if (err.kind === 'rate_limited' || err.kind === 'forbidden') {
             secondary = err;
           }
           this.logger.info(`Picnic position not read: ${errorReason(err)}`);
@@ -282,6 +328,7 @@ export class PicnicApp {
       }
       await this.apply(readSnapshot({ cart, deliveries, position }, this.now()));
       this.failures = 0;
+      this.sessionRetries = 0;
       this.offline = false;
       this.connectedOnce = true;
       this.pauseKind = undefined;
@@ -294,6 +341,8 @@ export class PicnicApp {
         return;
       }
       await this.failed(err);
+    } finally {
+      this.client.timeout = undefined;
     }
     await this.publishBadge();
     await this.flush();
@@ -304,37 +353,64 @@ export class PicnicApp {
 
   async failed(err) {
     const reason = errorReason(err);
-    const blocked = BLOCKED[err.kind] ?? (err.kind === 'session_refused' ? err.kind : undefined);
+    const blocked = BLOCKED[err.kind];
     if (blocked) {
       // Never signed in again by itself: refusals may lock the account, and a
       // new sign-in asking for a code needs the user anyway.
       this.blocked = blocked;
       this.logger.warn(`Picnic stopped: ${reason}`);
-      const message = { refused: T.refused, two_factor: T.twoFactor }[blocked] ?? T.sessionRefused;
+      const message =
+        blocked === 'refused'
+          ? T.refused
+          : blocked === 'login_rejected'
+            ? T.loginRejected(err.status)
+            : T.twoFactor;
       await this.setStatus(false, message);
       return;
     }
+    if (err.kind === 'session_refused') {
+      // Spaced new tries (1 h, 6 h, then every 24 h), one sign-in each.
+      const wait =
+        TIMINGS.sessionRetry[Math.min(this.sessionRetries, TIMINGS.sessionRetry.length - 1)];
+      this.sessionRetries += 1;
+      this.blocked = 'session_refused';
+      this.retryAt = this.now() + wait;
+      this.logger.warn(`Picnic: ${reason}; one new try in ${Math.round(wait / 60_000)} min`);
+      await this.setStatus(false, T.sessionRefused(age(wait)));
+      return;
+    }
     let wait;
+    let message;
     if (err.kind === 'rate_limited') {
       wait = Math.min(
         TIMINGS.rateLimitMax,
         Math.max(TIMINGS.rateLimitMin, err.retryAfter ?? TIMINGS.rateLimitDefault),
       );
       this.pauseKind = 'rate';
-      await this.setStatus(this.connectedOnce, T.rateLimited(age(wait)));
+      message = T.rateLimited(age(wait));
     } else if (err.kind === 'forbidden') {
       wait = TIMINGS.forbiddenPause;
       this.pauseKind = 'forbidden';
       this.offline = true;
-      await this.setStatus(false, T.forbidden(age(wait)));
+      message = T.forbidden(age(wait));
     } else {
       wait = TIMINGS.backoff[Math.min(this.failures, TIMINGS.backoff.length - 1)];
       this.pauseKind = 'backoff';
       this.offline = OFFLINE.has(err.kind) || this.offline;
-      await this.setStatus(false, T.unreachable(reason, age(wait)));
+      message = T.unreachable(reason, age(wait));
     }
     this.failures += 1;
     this.pausedUntil = Math.max(this.pausedUntil, this.now() + wait);
+    if (this.pauseKind === 'rate') {
+      this.memory.rateLimitedUntil = this.pausedUntil;
+      await this.saveMemory();
+    }
+    // While a code is awaited, the status keeps saying so.
+    const connected = err.kind === 'rate_limited' && this.connectedOnce && !this.blocked;
+    await this.setStatus(
+      connected,
+      this.blocked === 'two_factor' ? join(T.twoFactor, message) : message,
+    );
     this.logger.warn(`Picnic: ${reason}; next try in ${Math.round(wait / 1000)} s`);
   }
 
@@ -348,15 +424,35 @@ export class PicnicApp {
 
   // --- Gladys ----------------------------------------------------------------
 
+  /**
+   * The device key of the account, chosen once and kept in /data: the Picnic
+   * user id of the sign-in, else the country and a hash of the e-mail.
+   */
+  get deviceKey() {
+    const { account } = this.config;
+    if (!account) {
+      return undefined;
+    }
+    if (this.memory.deviceKey?.account === account) {
+      return this.memory.deviceKey.key;
+    }
+    return deviceKeyOf(account, this.client.session?.userId);
+  }
+
   get ids() {
-    return accountIds(this.gladys, this.config.account);
+    return accountIds(this.gladys, this.deviceKey);
   }
 
   async publishDevice() {
-    if (!this.snapshot || !this.config.account) {
+    const key = this.deviceKey;
+    if (!this.snapshot || !key) {
       return;
     }
-    const device = buildDevice(this.gladys, this.config.account, this.config);
+    if (this.memory.deviceKey?.account !== this.config.account) {
+      this.memory.deviceKey = { account: this.config.account, key };
+      await this.saveMemory();
+    }
+    const device = buildDevice(this.gladys, key, this.config);
     const json = JSON.stringify(device);
     if (json === this.published) {
       return;
@@ -376,7 +472,7 @@ export class PicnicApp {
   }
 
   queueStates(created = this.createdFeatures()) {
-    if (!this.snapshot) {
+    if (!this.snapshot || !this.deviceKey) {
       return;
     }
     for (const { device_feature_external_id: id, ...value } of deviceStates(
@@ -410,7 +506,7 @@ export class PicnicApp {
   }
 
   async publishBadge() {
-    if (!this.config.account) {
+    if (!this.deviceKey) {
       return;
     }
     const externalId = this.ids.device;
@@ -458,10 +554,16 @@ export class PicnicApp {
 
   // --- Configuration buttons ----------------------------------------------------
 
-  /** The 429 pause holds for every path, buttons included. */
-  rateLimitedMessage() {
+  /** A 429 or 403 pause holds for every path, buttons included. */
+  pauseMessage() {
     const left = this.pausedUntil - this.now();
-    return this.pauseKind === 'rate' && left > 0 ? T.rateLimited(age(left)) : undefined;
+    if (left <= 0) {
+      return undefined;
+    }
+    if (this.pauseKind === 'rate') {
+      return T.rateLimited(age(left));
+    }
+    return this.pauseKind === 'forbidden' ? T.forbidden(age(left)) : undefined;
   }
 
   async testConnection() {
@@ -471,23 +573,24 @@ export class PicnicApp {
     if (this.blocked === 'two_factor') {
       return T.twoFactor;
     }
-    const limited = this.rateLimitedMessage();
-    if (limited) {
-      return limited;
+    const paused = this.pauseMessage();
+    if (paused) {
+      return paused;
     }
-    if (this.snapshot && this.now() - this.lastTestAt < TIMINGS.testCooldown) {
-      const summary = this.summary();
-      return {
-        en: `${T.test.cooldown.en} ${summary.en}`,
-        fr: `${T.test.cooldown.fr} ${summary.fr}`,
-      };
+    // At most one sign-in per 30 s from this button, whatever happened before.
+    if (this.now() - this.lastTestAt < TIMINGS.testCooldown) {
+      const last = this.snapshot && !this.blocked ? this.summary() : this.lastMessage;
+      return last ? join(T.test.cooldown, last) : T.test.cooldown;
+    }
+    if (this.running) {
+      return T.busy;
     }
     this.lastTestAt = this.now();
     // One sign-in per click: the button is how a stopped account is retried.
     this.blocked = undefined;
     this.pausedUntil = 0;
-    await this.running;
-    await this.tick();
+    this.pauseKind = undefined;
+    await this.tick({ quick: true });
     const [connected, message] = JSON.parse(this.lastStatus ?? '[false,null]');
     if (!connected || !this.snapshot) {
       return message ?? T.noCredentials;
@@ -515,16 +618,22 @@ export class PicnicApp {
       case 'no_credentials':
         await this.failed(err);
         return T.refused;
+      case 'login_rejected':
+        await this.failed(err);
+        return T.loginRejected(err.status);
       case 'code_refused':
         return T.code.refused;
+      case 'code_send_refused':
+        return T.code.sendRefused(err.code);
       case 'code_expired':
         await this.setStatus(false, T.twoFactor);
         return T.code.expired;
       case 'no_pending':
         return T.code.noPending;
       case 'rate_limited':
+      case 'forbidden':
         await this.failed(err);
-        return this.rateLimitedMessage();
+        return this.pauseMessage();
       default:
         this.logger.warn(`Picnic verification: ${errorReason(err)}`);
         return T.code.failed(errorReason(err));
@@ -540,31 +649,43 @@ export class PicnicApp {
     if (!this.client.hasCredentials) {
       return T.noCredentials;
     }
-    const limited = this.rateLimitedMessage();
-    if (limited) {
-      return limited;
+    if (this.client.session && !this.blocked) {
+      // Connected: a new sign-in would only risk the working session.
+      return T.code.alreadyConnected;
     }
-    if (this.now() - this.lastCodeAt < TIMINGS.codeCooldown) {
+    const paused = this.pauseMessage();
+    if (paused) {
+      return paused;
+    }
+    const lastCodeAt = this.memory.codeAt ?? -Infinity;
+    if (this.now() - lastCodeAt < TIMINGS.codeCooldown) {
       return T.code.cooldown;
     }
-    this.lastCodeAt = this.now();
-    await this.running;
+    if (this.running) {
+      return T.busy;
+    }
+    this.memory.codeAt = this.now();
+    await this.saveMemory();
+    this.client.timeout = TIMINGS.quickTimeout;
+    let result;
     try {
-      const result = await this.client.requestCode(channel);
-      if (result === 'not_needed') {
-        this.blocked = undefined;
-        this.pausedUntil = 0;
-        await this.tick();
-        return T.code.notNeeded;
-      }
-      this.blocked = 'two_factor';
-      this.clearTimer();
-      await this.setStatus(false, T.twoFactor);
-      this.logger.info(`Picnic verification code requested (${channel})`);
-      return T.code.sent(channel);
+      result = await this.client.requestCode(channel);
     } catch (err) {
       return this.codeFailure(err);
+    } finally {
+      this.client.timeout = undefined;
     }
+    if (result === 'not_needed') {
+      this.blocked = undefined;
+      this.pausedUntil = 0;
+      await this.tick({ quick: true });
+      return T.code.notNeeded;
+    }
+    this.blocked = 'two_factor';
+    this.clearTimer();
+    await this.setStatus(false, T.twoFactor);
+    this.logger.info(`Picnic verification code requested (${channel})`);
+    return T.code.sent(channel);
   }
 
   /** Step 2: the code received; the waiting sign-in becomes the session. */
@@ -579,21 +700,26 @@ export class PicnicApp {
     if (!this.client.pending) {
       return T.code.noPending;
     }
-    const limited = this.rateLimitedMessage();
-    if (limited) {
-      return limited;
+    const paused = this.pauseMessage();
+    if (paused) {
+      return paused;
     }
-    await this.running;
+    if (this.running) {
+      return T.busy;
+    }
+    this.client.timeout = TIMINGS.quickTimeout;
     try {
       await this.client.verifyCode(code);
     } catch (err) {
       return this.codeFailure(err);
+    } finally {
+      this.client.timeout = undefined;
     }
     this.logger.info('Picnic verification code accepted');
     this.blocked = undefined;
     this.failures = 0;
     this.pausedUntil = 0;
-    await this.tick();
+    await this.tick({ quick: true });
     return T.code.verified;
   }
 }

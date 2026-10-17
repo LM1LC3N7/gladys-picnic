@@ -90,15 +90,35 @@ up to date at the end of every milestone.
   carries (the library does the same). No proactive renewal before an
   expiry: a new sign-in may ask for a code, so the integration signs in
   only when the token is refused.
-- **401, as the brief asks**: one new sign-in and one retry, at most one new
-  sign-in per cycle; refused again, the integration stops with a message
-  (`session_refused`). A refused password and a code asked stop too. Only a
-  configuration change, _Test the connection_ or the code buttons start
-  again. This departs from the wave-1 lesson "never dead without a retry
-  timer" on purpose: these are not passing failures, repeated refused
-  sign-ins may lock the account, and a sign-in asking for a code needs the
-  user anyway; every passing failure (5xx, network, 403, 429) keeps its
-  timer.
+- **401, as the brief asks** (revised after review): one new sign-in and
+  one retry, at most one new sign-in per cycle; refused again
+  (`session_refused`), a pause with a message and one new try (one sign-in)
+  after 1 h, 6 h, then every 24 h, so the integration is never dead without
+  a timer (wave-1 lesson). A try that is refused or asks for a code falls
+  into the stops below, never requests a code. A refused password, a
+  rejected sign-in request (400/422: "update the integration") and a code
+  asked stop until a configuration change, _Test the connection_ or the code
+  buttons: repeated refused sign-ins may lock the account, and a code needs
+  the user anyway.
+- **The live position never signs in**: a 401 there is logged and ignored,
+  the session untouched (a token refused by that endpoint only must not
+  stop the integration); the next cart read tells a really dead session.
+- **Buttons**: _Test the connection_ signs in at most once per 30 s in every
+  case (the last status is shown meanwhile), skips the live position and
+  uses 8 s requests so it answers within its 60 s; a button clicked during a
+  running read answers "in progress" instead of waiting for it. _Send the
+  verification code_ answers "already connected" without any request while
+  a session works (a new sign-in would only risk it). A 429 or a 403 (one
+  hour) from a code button pauses every path; during a verification the
+  status keeps the code message with the pause. A refusal of
+  `/user/2fa/generate` is shown as "sending the code refused (CODE)", not as
+  a refused code; a new token in its answer replaces the waiting one
+  (session.py does the same). The one-code-a-minute limit is kept in
+  `/data`.
+- **429 pause** kept in `/data` and across a change of e-mail, password or
+  country (`reset()` keeps it).
+- **`/data` writes serialized** (a promise chain): two saves never share the
+  temporary file.
 - **Two-step verification in two actions** (manifest `actions` with
   `fields`): _Send the verification code_ (field `channel`: `sms`/`email`,
   signs in again if the waiting sign-in is older than 10 minutes, then
@@ -113,12 +133,17 @@ up to date at the end of every milestone.
   once in `/data` (the library sends a fixed one for every user); stable so
   the account sees one device. If Picnic refuses it on a real account,
   fall back to the library's value.
-- **Device id**: `account:<country>-<hash of the e-mail>` rather than the
-  Picnic `user_id`: no extra `GET /user` call, nothing personal in the id;
-  changing the e-mail of the configuration makes a new device (documented
-  as one account per Gladys).
+- **Device id** (revised after review, before the first release):
+  `account:<Picnic user_id>` from the sign-in answer (Home Assistant's unique
+  id), so changing the e-mail of the same account keeps the device. Fallback
+  when the answer has no usable `user_id` (`[A-Za-z0-9_-]{1,64}`):
+  `account:<country>-<sha256(e-mail)[0..16]>`. The key is chosen at the
+  first publication and kept in `/data` per account, so it never flips
+  later. No extra `GET /user` call.
 - **Next delivery**: the CURRENT delivery without `delivery_time` with the
-  earliest slot (Home Assistant takes the last CURRENT of the list, the same
+  earliest slot among those whose window (ETA included) + 30 min is still to
+  come; a stale CURRENT one (no `delivery_time` left behind) only when there
+  is no other (Home Assistant takes the last CURRENT of the list, the same
   one when the list is the most recent first). **Last order**: the most
   recent by `creation_time`, else the first of the list (Home Assistant:
   the first).
@@ -156,7 +181,7 @@ up to date at the end of every milestone.
   to the polling and to the three buttons; kept across Gladys
   reconnections. **403** without an authentication code (CDN): one-hour
   pause. **5xx/network**: 2, 5, 10, 15, then 30 minutes. Answers read up to
-  1 MiB, 20 s timeout.
+  4 MiB (a long delivery history), 20 s timeout (8 s for the buttons).
 - **Read only**: `onSetValue` refuses; no cart change, no order in v1 (see
   Milestone 3).
 - **Category `services`** in the store (no shopping category exists).

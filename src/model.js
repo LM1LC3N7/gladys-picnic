@@ -72,24 +72,28 @@ function etaOf(window) {
 /**
  * The next delivery: the CURRENT, not yet delivered one with the earliest
  * slot (Home Assistant takes the last CURRENT of the list, the same one when
- * the list is sorted the most recent first).
+ * the list is sorted the most recent first). A CURRENT one whose window
+ * (plus 30 min) is over, left without `delivery_time`, only comes when no
+ * other is still to come: it never hides the real next one.
  */
-export function readNextDelivery(deliveries) {
-  const next = list(deliveries)
+export function readNextDelivery(deliveries, now = Date.now()) {
+  const candidates = list(deliveries)
     .filter((d) => d.status === DELIVERY_STATUS.CURRENT && !delivered(d))
-    .map((d) => ({
-      id: idOf(d.delivery_id ?? d.id),
-      start: parseTime(d.slot?.window_start),
-      end: parseTime(d.slot?.window_end),
-      cutOff: parseTime(d.slot?.cut_off_time),
-      eta: etaOf(d.eta2),
-    }))
+    .map((d) => {
+      const eta = etaOf(d.eta2);
+      return {
+        id: idOf(d.delivery_id ?? d.id),
+        start: parseTime(d.slot?.window_start),
+        end: parseTime(d.slot?.window_end),
+        cutOff: parseTime(d.slot?.cut_off_time),
+        eta,
+        arrival: eta?.start.at,
+      };
+    })
     .filter((d) => d.id && d.start)
-    .sort((a, b) => a.start.at - b.start.at)[0];
-  if (!next) {
-    return null;
-  }
-  return { ...next, arrival: next.eta?.start.at };
+    .sort((a, b) => a.start.at - b.start.at);
+  const ahead = candidates.filter((d) => deliveryWindow(d).end + TIMINGS.nearLag >= now);
+  return ahead[0] ?? candidates[0] ?? null;
 }
 
 /** The live position, when Picnic has one: its ETA window and its `eta` (ms). */
@@ -150,7 +154,7 @@ export function readCutOff(cart, next, now) {
 
 /** Everything one cycle read. */
 export function readSnapshot({ cart, deliveries, position }, now) {
-  const next = withPosition(readNextDelivery(deliveries), position);
+  const next = withPosition(readNextDelivery(deliveries, now), position);
   return {
     cart: readCart(cart),
     next,
