@@ -1,6 +1,6 @@
 {
   "name": "gladys-picnic",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Picnic (online supermarket, NL/DE/BE/FR) for Gladys Assistant: next delivery slot and estimated arrival, last order status, cart count and total, read only.",
   "type": "module",

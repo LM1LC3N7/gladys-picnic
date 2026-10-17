@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-17
+
 ### Added
 
 - Sign-in to Picnic (Netherlands, Germany, Belgium, France) with the e-mail,
@@ -34,3 +36,6 @@ the notes of the version's GitHub Release.
   6 hours); 5xx and network errors retried after 2 to 30 minutes.
 - "Test the connection" button; documentation in English and French;
   `LICENSE` and `THIRD_PARTY_NOTICES.md` shipped in the image.
+
+[Unreleased]: https://github.com/LM1LC3N7/gladys-picnic/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-picnic/releases/tag/v0.1.1
