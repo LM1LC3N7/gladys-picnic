@@ -1,61 +1,114 @@
-# Demo Devices Template
+# Picnic for Gladys Assistant
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+Shows your **Picnic** grocery deliveries in Gladys (Netherlands, Germany,
+Belgium, France), read only: the slot of the next delivery, its estimated
+arrival when Picnic gives one, the order cut-off, the status of the last
+order, and the cart. A scene trigger fires when the delivery is approaching.
+
+> **Unofficial API, never tested with a real account.** The integration
+> talks to the API of the Picnic app, which Picnic does not document and may
+> change at any time. It was written from python-picnic-api2 and the Home
+> Assistant integration, and tested against made-up answers only. Not
+> affiliated with Picnic.
 
 ## What you get
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+One device, **Picnic**, with these features (all read only):
 
-## Configuration
+| Feature                          | Example                              | Notes                                                        |
+| -------------------------------- | ------------------------------------ | ------------------------------------------------------------ |
+| Next delivery: slot start        | `2026-10-18 14:15`                   | local time given by Picnic; `—` without a planned delivery   |
+| Next delivery: slot end          | `2026-10-18 16:15`                   |                                                              |
+| Next delivery: estimated arrival | `2026-10-18 14:48 (14:40–15:00)`     | only when Picnic gives an ETA (usually on the day), else `—` |
+| Order before                     | `2026-10-17 23:00`                   | see below                                                    |
+| Last order status                | `Upcoming`, `Delivered`, `Cancelled` | other statuses shown as Picnic sends them                    |
+| Cart: articles                   | `3`                                  |                                                              |
+| Cart: total                      | `12.34` €                            |                                                              |
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+**Order before** is the cut-off of the booked delivery while it can still be
+changed; once it has passed, the cut-off of the slot selected in the cart,
+else of the first slot the cart offers.
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+Gladys has no date feature: times are text, shown as the local time Picnic
+sends (the time zone of your Picnic country).
 
-## Actions
+Nothing is ever added to the cart or ordered: this version only reads.
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+## Set up
 
-## Scenes
+1. In Gladys, install the **Picnic** integration from the store.
+2. Enter the **e-mail** and **password** of your Picnic account (the ones of
+   the app) and choose its **country**, then save.
+3. If the status asks for a verification code, see below.
+4. Open the **Discovery** tab and add the **Picnic** device.
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+The password field is a `secret` field: Gladys keeps it in its database
+(in plain text, like every configuration value, and in its backups), never
+shows it again, and the integration only sends it to Picnic, as the MD5
+digest the Picnic app sends.
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+### Verification code (two steps)
 
-## Dashboard
+For a new sign-in, Picnic may ask for a code sent by SMS or e-mail. The
+integration never asks for one by itself (no SMS without your click). When
+the status says "Picnic asks for a verification code":
 
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
+1. In the configuration screen, under **Send the verification code**,
+   choose **SMS** or **E-mail** and click the button. The integration signs
+   in and Picnic sends the code.
+2. Under **Verify the code**, type the code you received and click the
+   button. "Code accepted" means connected.
 
-## Troubleshooting
+The session is then kept (in the integration's `/data`): no code at the next
+restarts. A code is requested at most once a minute; a sign-in waiting for
+its code is restarted after 10 minutes. If the code is refused, check it or
+ask for a new one.
 
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+## Refresh
+
+- Every **15 minutes** by default (5 to 60, _Refresh interval_). Each read
+  is 2 requests: the cart and the delivery list.
+- **Delivery day**: from 12 hours before the slot, every 5 minutes.
+- **Around the delivery**: from 45 minutes before the slot (or the ETA) to
+  30 minutes after it, every 2 minutes, plus the live position (a third
+  request, for the ETA).
+
+## Scene trigger: "Picnic delivery approaching"
+
+Fires **once per delivery**, when the estimated arrival given by Picnic is at
+most _"Delivery approaching" lead_ minutes away (15 by default, 5 to 60).
+Without an ETA from Picnic, it does not fire. Variables:
+`minutes` (minutes before the arrival), `eta`, `slot_start`, `slot_end`
+(local times as text). Example: switch the porch light on and send a message
+"Picnic in 15 minutes".
+
+## When things go wrong
+
+- **E-mail or password refused**: the integration stops and waits. Check the
+  e-mail, the password and the country, then save (or click _Test the
+  connection_). It never signs in again by itself after a refusal.
+- **Session refused**: the session token kept is refused, the integration
+  signs in again **once**; refused again, it stops with a message. _Test the
+  connection_ tries once more.
+- **Too many requests (429)**: a pause of 1 minute to 6 hours (Picnic's
+  `Retry-After`, 15 minutes without it), for every read and button.
+- **Picnic unavailable (5xx, network)**: new tries after 2, 5, 10, 15, then
+  every 30 minutes.
+- The live position failing never hides the cart and the deliveries.
+
+## Limits
+
+- Unofficial API: Picnic may change it, block it or ask for more checks.
+- Read only: no cart changes, no ordering (maybe later).
+- One Picnic account per Gladys.
+- Never tested with a real account: please report what you see on the
+  [GitHub repository](https://github.com/LM1LC3N7/gladys-picnic/issues)
+  (without your e-mail, password or codes).
+
+## Privacy
+
+The integration keeps in `/data/picnic-state.json` (readable by its
+container only): a random device id, the session token, the account it
+belongs to as a hash of the e-mail and the country, and the ids of the
+deliveries already announced. Neither the e-mail nor the password. Nothing
+is sent anywhere but to Picnic.

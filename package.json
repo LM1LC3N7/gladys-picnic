@@ -1,8 +1,8 @@
 {
-  "name": "gladys-integration-template-js",
-  "version": "1.0.0",
+  "name": "gladys-picnic",
+  "version": "0.1.0",
   "private": true,
-  "description": "Official starter template to build an external integration for Gladys Assistant with the JavaScript SDK.",
+  "description": "Picnic (online supermarket, NL/DE/BE/FR) for Gladys Assistant: next delivery slot and estimated arrival, last order status, cart count and total, read only.",
   "type": "module",
   "main": "index.js",
   "scripts": {
@@ -10,10 +10,15 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "node --test"
+    "test": "node --test",
+    "audit": "npm audit --omit=dev"
   },
   "engines": {
     "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LM1LC3N7/gladys-picnic.git"
   },
   "dependencies": {
     "@gladysassistant/integration-sdk": "^0.15.0"

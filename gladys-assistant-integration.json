@@ -1,101 +1,250 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "Picnic",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Picnic groceries (NL, DE, BE, FR): next delivery slot and ETA, last order, cart. Read only.",
+    "fr": "Courses Picnic (NL, DE, BE, FR) : créneau et arrivée de la livraison, commande, panier."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-picnic:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-picnic/main/cover.png",
+  "categories": ["services"],
+  "transports": ["cloud"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": {
+        "en": "Your Picnic account",
+        "fr": "Votre compte Picnic"
+      },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "Shows your Picnic deliveries in Gladys, read only: start and end of the next delivery slot, its estimated arrival when Picnic gives one, the order cut-off, the status of the last order, the number of articles and the total of the cart, and a scene trigger when the delivery is approaching. Enter the e-mail, password and country of the Picnic app, save, then add the Picnic device from the Discovery tab. If Picnic asks for a verification code, use the two buttons below: send the code, then type it in. Read every 15 minutes, more often on delivery day. Unofficial API, never tested with a real account. Not affiliated with Picnic.",
+        "fr": "Affiche vos livraisons Picnic dans Gladys, en lecture seule : début et fin du créneau de la prochaine livraison, son heure d'arrivée estimée quand Picnic la donne, la date limite de commande, l'état de la dernière commande, le nombre d'articles et le total du panier, et un déclencheur de scène quand la livraison approche. Saisissez l'e-mail, le mot de passe et le pays de l'application Picnic, enregistrez, puis ajoutez l'appareil Picnic depuis l'onglet Découverte. Si Picnic demande un code de vérification, utilisez les deux boutons ci-dessous : envoyer le code, puis le saisir. Lecture toutes les 15 minutes, plus souvent le jour de livraison. API non officielle, jamais testée avec un vrai compte. Sans lien avec Picnic."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-picnic/blob/main/docs/fr.md",
+          "label": {
+            "en": "Guide (French)",
+            "fr": "Guide (français)"
+          }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-picnic/blob/main/docs/en.md",
+          "label": {
+            "en": "Guide (English)",
+            "fr": "Guide (anglais)"
+          }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
-      "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+      "key": "email",
+      "type": "string",
+      "label": {
+        "en": "Picnic e-mail",
+        "fr": "E-mail Picnic"
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
+      "placeholder": {
+        "en": "you@example.com",
+        "fr": "vous@exemple.fr"
+      },
+      "required": true
     },
     {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
-      "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
+      "key": "password",
+      "type": "secret",
+      "label": {
+        "en": "Picnic password",
+        "fr": "Mot de passe Picnic"
       },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
-      "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
+      "description": {
+        "en": "Kept by Gladys in its database, never shown again, sent only to Picnic (as the MD5 digest the app sends).",
+        "fr": "Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement à Picnic (sous la forme MD5 qu'envoie l'application)."
+      },
+      "required": true
     },
     {
-      "key": "unit",
+      "key": "country",
       "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
-      "required": false,
-      "default": "celsius",
+      "label": {
+        "en": "Country of the account",
+        "fr": "Pays du compte"
+      },
+      "required": true,
       "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
+        {
+          "value": "NL",
+          "label": {
+            "en": "Netherlands",
+            "fr": "Pays-Bas"
+          }
+        },
+        {
+          "value": "DE",
+          "label": {
+            "en": "Germany",
+            "fr": "Allemagne"
+          }
+        },
+        {
+          "value": "BE",
+          "label": {
+            "en": "Belgium",
+            "fr": "Belgique"
+          }
+        },
+        {
+          "value": "FR",
+          "label": {
+            "en": "France",
+            "fr": "France"
+          }
+        }
       ]
     },
     {
-      "key": "poll_frequency",
+      "key": "poll_interval",
       "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "label": {
+        "en": "Refresh interval (min)",
+        "fr": "Intervalle de rafraîchissement (min)"
+      },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
+        "en": "Minutes between two reads (5 to 60). On delivery day, every 5 minutes, then every 2 minutes around the delivery.",
+        "fr": "Minutes entre deux lectures (5 à 60). Le jour de livraison, toutes les 5 minutes, puis toutes les 2 minutes autour de la livraison."
       },
       "required": false,
-      "default": 300,
-      "min": 60,
-      "max": 3600
+      "default": 15,
+      "min": 5,
+      "max": 60
+    },
+    {
+      "key": "approach_minutes",
+      "type": "number",
+      "label": {
+        "en": "\"Delivery approaching\" lead (min)",
+        "fr": "Délai « livraison en approche » (min)"
+      },
+      "description": {
+        "en": "The scene trigger fires once per delivery, this many minutes before the estimated arrival (5 to 60), when Picnic gives one.",
+        "fr": "Le déclencheur de scène part une fois par livraison, ce nombre de minutes avant l'arrivée estimée (5 à 60), quand Picnic la donne."
+      },
+      "required": false,
+      "default": 15,
+      "min": 5,
+      "max": 60
+    },
+    {
+      "key": "language",
+      "type": "select",
+      "label": {
+        "en": "Language of the feature names",
+        "fr": "Langue des noms des fonctionnalités"
+      },
+      "description": {
+        "en": "Used for the feature names of the device added from now on, and for the order statuses.",
+        "fr": "Sert aux noms des fonctionnalités de l'appareil ajouté désormais, et aux états des commandes."
+      },
+      "required": false,
+      "default": "fr",
+      "options": [
+        {
+          "value": "fr",
+          "label": {
+            "en": "French",
+            "fr": "Français"
+          }
+        },
+        {
+          "value": "en",
+          "label": {
+            "en": "English",
+            "fr": "Anglais"
+          }
+        }
+      ]
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
-      "timeout_seconds": 30
+      "key": "test_connection",
+      "label": {
+        "en": "Test the connection",
+        "fr": "Tester la connexion"
+      },
+      "description": {
+        "en": "Signs in if needed and reads the deliveries and the cart once.",
+        "fr": "Se connecte si besoin et lit une fois les livraisons et le panier."
+      },
+      "timeout_seconds": 60
     },
     {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
+      "key": "request_code",
+      "label": {
+        "en": "Send the verification code",
+        "fr": "Envoyer le code de vérification"
+      },
+      "description": {
+        "en": "Step 1, only when Picnic asks for a code: signs in and has Picnic send a code by SMS or e-mail.",
+        "fr": "Étape 1, seulement si Picnic demande un code : se connecte et fait envoyer un code par SMS ou e-mail."
+      },
+      "timeout_seconds": 60,
       "fields": [
         {
-          "key": "device",
+          "key": "channel",
           "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
+          "label": {
+            "en": "Send the code by",
+            "fr": "Recevoir le code par"
+          },
+          "required": true,
+          "default": "sms",
+          "options": [
+            {
+              "value": "sms",
+              "label": {
+                "en": "SMS",
+                "fr": "SMS"
+              }
+            },
+            {
+              "value": "email",
+              "label": {
+                "en": "E-mail",
+                "fr": "E-mail"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "verify_code",
+      "label": {
+        "en": "Verify the code",
+        "fr": "Vérifier le code"
+      },
+      "description": {
+        "en": "Step 2: type the code Picnic sent. The session is then kept: no code at the next restarts.",
+        "fr": "Étape 2 : saisissez le code envoyé par Picnic. La session est ensuite gardée : pas de code aux redémarrages."
+      },
+      "timeout_seconds": 60,
+      "fields": [
+        {
+          "key": "code",
+          "type": "string",
+          "label": {
+            "en": "Code received",
+            "fr": "Code reçu"
+          },
+          "placeholder": {
+            "en": "123456",
+            "fr": "123456"
+          },
           "required": true
         }
       ]
@@ -103,75 +252,49 @@
   ],
   "scene_triggers": [
     {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
-      "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
+      "key": "delivery_approaching",
+      "label": {
+        "en": "Picnic delivery approaching",
+        "fr": "Livraison Picnic en approche"
       },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
-        },
-        {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
-          "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
-          ]
-        }
-      ],
+      "description": {
+        "en": "Once per delivery, when the estimated arrival given by Picnic is close (lead set in the configuration).",
+        "fr": "Une fois par livraison, quand l'arrivée estimée donnée par Picnic est proche (délai réglé dans la configuration)."
+      },
       "variables": [
         {
-          "key": "target",
+          "key": "minutes",
+          "type": "number",
+          "label": {
+            "en": "Minutes before the arrival",
+            "fr": "Minutes avant l'arrivée"
+          }
+        },
+        {
+          "key": "eta",
           "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
+          "label": {
+            "en": "Estimated arrival",
+            "fr": "Arrivée estimée"
+          }
+        },
+        {
+          "key": "slot_start",
+          "type": "string",
+          "label": {
+            "en": "Slot start",
+            "fr": "Début du créneau"
+          }
+        },
+        {
+          "key": "slot_end",
+          "type": "string",
+          "label": {
+            "en": "Slot end",
+            "fr": "Fin du créneau"
+          }
         }
       ]
-    }
-  ],
-  "scene_actions": [
-    {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
-      },
-      "timeout_seconds": 15,
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ],
-      "outputs": [
-        {
-          "key": "signalled",
-          "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
-        }
-      ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
     }
   ]
 }

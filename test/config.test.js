@@ -1,33 +1,74 @@
+// -----------------------------------------------------------------------------
+// src/config.js and src/store.js: the configuration and /data, repaired.
+// -----------------------------------------------------------------------------
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeConfig, DEFAULT_CONFIG } from '../src/config.js';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { accountKey, normalizeConfig } from '../src/config.js';
+import { fileStore, newDeviceId, normalizeMemory } from '../src/store.js';
 
-test('normalizeConfig returns the defaults when called with no argument', () => {
-  assert.deepEqual(normalizeConfig(), DEFAULT_CONFIG);
+test('the configuration: trimmed, bounded, defaults', () => {
+  assert.deepEqual(normalizeConfig({}), {
+    email: '',
+    password: '',
+    country: '',
+    account: '',
+    pollInterval: 15,
+    approachMinutes: 15,
+    language: 'fr',
+  });
+  const config = normalizeConfig({
+    email: ' Jane@Example.com ',
+    password: ' p ',
+    country: 'be',
+    poll_interval: 1,
+    approach_minutes: 600,
+    language: 'EN',
+  });
+  assert.equal(config.email, 'Jane@Example.com');
+  assert.equal(config.password, ' p ', 'a password is kept as typed');
+  assert.equal(config.country, 'BE');
+  assert.equal(config.account, `BE:${accountKey('jane@example.com')}`);
+  assert.equal(config.pollInterval, 5);
+  assert.equal(config.approachMinutes, 60);
+  assert.equal(config.language, 'en');
+  assert.equal(normalizeConfig({ email: 'a@b', password: 'p', country: 'ES' }).account, '');
 });
 
-test('normalizeConfig keeps user values over the defaults', () => {
-  const config = normalizeConfig({ latitude: 45.5, longitude: -73.6, unit: 'fahrenheit' });
-  assert.equal(config.latitude, 45.5);
-  assert.equal(config.longitude, -73.6);
-  assert.equal(config.unit, 'fahrenheit');
+test('the persisted state: repaired, never trusted', () => {
+  assert.deepEqual(normalizeMemory(null), {
+    did: null,
+    session: null,
+    pending: null,
+    announced: [],
+  });
+  const memory = normalizeMemory({
+    did: 'ABCDEF0123456789',
+    session: { account: 'FR:x', token: 't', expiresAt: 'later' },
+    pending: { account: 'FR:x', token: 'p' },
+    announced: ['a', 2, 'b'],
+  });
+  assert.deepEqual(memory.session, { account: 'FR:x', token: 't', expiresAt: undefined });
+  assert.equal(memory.pending, null, 'a pending sign-in without its date is dropped');
+  assert.deepEqual(memory.announced, ['a', 'b']);
+  assert.equal(normalizeMemory({ did: '../etc' }).did, null);
+  assert.match(newDeviceId(), /^[0-9A-F]{16}$/);
 });
 
-test('normalizeConfig coerces numeric strings coming from a form', () => {
-  const config = normalizeConfig({ latitude: '48.8', longitude: '2.3', poll_frequency: '600' });
-  assert.equal(config.latitude, 48.8);
-  assert.equal(config.longitude, 2.3);
-  assert.equal(config.poll_frequency, 600);
-  assert.equal(typeof config.poll_frequency, 'number');
-});
-
-test('normalizeConfig falls back to the default for a missing numeric field', () => {
-  const config = normalizeConfig({ unit: 'celsius' });
-  assert.equal(config.poll_frequency, DEFAULT_CONFIG.poll_frequency);
-});
-
-test('GLADYS_PREFER_LOCAL defaults to true and only an explicit false disables it', () => {
-  assert.equal(normalizeConfig().GLADYS_PREFER_LOCAL, true);
-  assert.equal(normalizeConfig({ GLADYS_PREFER_LOCAL: true }).GLADYS_PREFER_LOCAL, true);
-  assert.equal(normalizeConfig({ GLADYS_PREFER_LOCAL: false }).GLADYS_PREFER_LOCAL, false);
+test('the file store writes atomically, readable by its owner only', async (t) => {
+  // Inside the repository, not the system temporary directory.
+  const dir = await mkdtemp(join(fileURLToPath(new URL('..', import.meta.url)), '.test-store-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'state.json');
+  const store = fileStore(path);
+  assert.equal(await store.load(), null);
+  await store.save({ did: 'X' });
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), { did: 'X' });
+  assert.deepEqual(await store.load(), { did: 'X' });
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+  }
 });
