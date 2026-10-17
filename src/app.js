@@ -317,7 +317,9 @@ export class PicnicApp {
           if (FATAL.has(err.kind)) {
             throw err;
           }
-          if (err.kind === 'rate_limited' || err.kind === 'forbidden') {
+          // Only a 429 pauses every path; a 403 here (a CDN on this endpoint) is
+          // logged like the others: the next cart read tells a real block.
+          if (err.kind === 'rate_limited') {
             secondary = err;
           }
           this.logger.info(`Picnic position not read: ${errorReason(err)}`);

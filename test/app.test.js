@@ -474,6 +474,23 @@ test('a refused token on the position is ignored: the session and the reads go o
   assert.equal(server.of('/deliveries/d-next/position').length, 2);
 });
 
+test('a 403 on the position is ignored: connected, cloud badge, next read 2 minutes later', async (t) => {
+  const server = fakePicnic();
+  server.queue.push({
+    match: (r) => r.path.endsWith('/position'),
+    status: 403,
+    body: '<html>blocked</html>',
+  });
+  const { gladys, advance } = await setup(t, { server, now: NEXT_START - 10 * MINUTE });
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+  assert.equal(gladys.fake.transports.at(-1).transport, DEVICE_TRANSPORTS.CLOUD);
+  assert.equal(server.reads().length, 1);
+  await advance(2 * MINUTE);
+  assert.equal(server.reads().length, 2, 'no pause: the next read comes 2 minutes later');
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+  assert.equal(gladys.fake.transports.at(-1).transport, DEVICE_TRANSPORTS.CLOUD);
+});
+
 test('a sign-in request rejected (400) asks to update the integration and stops', async (t) => {
   const server = fakePicnic();
   server.queue.push({ match: is('/user/login'), status: 400, body: { error: { code: 'BAD' } } });
