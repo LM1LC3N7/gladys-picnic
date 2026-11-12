@@ -40,7 +40,7 @@ function* texts(node, path = '') {
 test('the store basics, and the version set by hand to 0.1.0 everywhere', () => {
   assert.equal(manifest.manifest_version, 1);
   assert.equal(manifest.type, 'device');
-  assert.match(manifest.gladys_version, /^>=5\.1\.0$/, 'scene triggers need Gladys 5.1');
+  assert.match(manifest.gladys_version, /^>=5\.3\.0$/, 'scene triggers need Gladys 5.1');
   assert.equal(manifest.docker_image, `ghcr.io/lm1lc3n7/gladys-picnic:${manifest.version}`);
   assert.equal(manifest.version, JSON.parse(read('package.json')).version);
   const lock = JSON.parse(read('package-lock.json'));
@@ -143,4 +143,13 @@ test('the trigger variables are what the event carries', () => {
     keys,
   );
   assert.equal(trigger.fields, undefined);
+});
+
+test('the catalog countries: the Netherlands, Germany, Belgium and France, which needs Gladys >= 5.3.0', () => {
+  assert.deepEqual(manifest.countries, ['NL', 'DE', 'BE', 'FR']);
+  const [major, minor] = manifest.gladys_version
+    .match(/>=\s*(\d+)\.(\d+)/)
+    .slice(1)
+    .map(Number);
+  assert.ok(major > 5 || (major === 5 && minor >= 3), 'countries needs Gladys 5.3.0');
 });
